@@ -23,10 +23,10 @@ pub mod snap;
 pub use constrain::{
     ConstrainError, DofSummary, constrain_angle, constrain_block, constrain_coincident_points,
     constrain_concentric, constrain_distance, constrain_equal_radius, constrain_fixed,
-    constrain_line_distance, constrain_lines, constrain_point_distance, constrain_point_pair,
-    constrain_radius, constrain_symmetric_points, diagnose_conflict, dof_report,
-    resolve_after_direct_edit, resolve_after_edit, resolve_after_transform,
-    resolve_after_transform_rigid, selection_validity,
+    constrain_line_distance, constrain_lines, constrain_point_distance,
+    constrain_point_line_distance, constrain_point_pair, constrain_radius,
+    constrain_symmetric_points, diagnose_conflict, dof_report, resolve_after_direct_edit,
+    resolve_after_edit, resolve_after_transform, resolve_after_transform_rigid, selection_validity,
 };
 pub use draw as commands;
 pub use grips::{Grip, GripRole, apply_grip, apply_grip_value, grip_value_label, grips_for};

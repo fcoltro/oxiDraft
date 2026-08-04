@@ -1185,6 +1185,86 @@ pub fn constrain_point_distance(
     Ok(format!("Held the points {target} apart"))
 }
 
+/// Holds a picked point anchor at a driving perpendicular distance from a
+/// line entity. `value: None` locks the current separation in place;
+/// `place` stores where the dimension annotation was dropped.
+///
+/// Distinct from [`constrain_point_distance`] because the second pick is a
+/// whole line, not an anchor on one: the distance is to the line's infinite
+/// carrier, so which end of it was clicked is irrelevant.
+pub fn constrain_point_line_distance(
+    doc: &mut Document,
+    anchor: (EntityId, u8),
+    line: EntityId,
+    value: Option<f64>,
+    place: Option<(f64, f64)>,
+) -> Result<String, ConstrainError> {
+    let (a_id, ea) = anchor;
+    if a_id == line {
+        return Err("Pick a point and a different line to hold it off".into());
+    }
+    if !anchor_ok(doc, a_id, ea) {
+        return Err(format!(
+            "Pick an endpoint, midpoint, center, or point{}",
+            polyline_hint(doc, &[a_id])
+        )
+        .into());
+    }
+    let Some(l) = line_of(doc, line) else {
+        return Err(format!(
+            "Point-line distance needs a line to measure to{}",
+            polyline_hint(doc, &[line])
+        )
+        .into());
+    };
+    let (ax, ay) = anchor_pos(doc, a_id, ea).ok_or("Could not resolve the picked point")?;
+    let (ux, uy) = (l.p1.x - l.p0.x, l.p1.y - l.p0.y);
+    let n = ux.hypot(uy);
+    if n <= 1e-9 {
+        return Err("That line is too short to measure from".into());
+    }
+    let current = ((ux * (ay - l.p0.y) - uy * (ax - l.p0.x)) / n).abs();
+    let target = value.unwrap_or(current);
+    if !target.is_finite() || target <= 0.0 {
+        return Err(
+            "Distance must be a positive number (use Point on line for zero separation)".into(),
+        );
+    }
+    let mut candidate = SketchConstraint::point_distance(
+        ConstraintKind::PointLineDistance,
+        a_id,
+        ea,
+        line,
+        0,
+        target,
+    );
+    candidate.place = place;
+    let prev = doc
+        .constraints
+        .iter()
+        .find(|c| c.same_relation(&candidate))
+        .copied();
+    if doc.add_constraint(candidate)
+        && let Err(conflict) = validate_recorded(doc, &[a_id, line], &candidate, false)
+    {
+        restore_or_remove(doc, prev, |c| c.same_relation(&candidate));
+        return Err(ConstrainError {
+            message: format!(
+                "Could not hold the point {target} from the line against its existing constraints{}",
+                conflict.message
+            ),
+            culprits: conflict.culprits,
+        });
+    }
+    let CompSketch { mut s, vars, .. } = component_sketch(doc, &[a_id, line]);
+    if !s.solve_robust().converged {
+        restore_or_remove(doc, prev, |c| c.same_relation(&candidate));
+        return Err("Could not hold the point at that distance from the line".into());
+    }
+    write_back(doc, &s, &vars);
+    Ok(format!("Held the point {target} from the line"))
+}
+
 /// Mirrors two picked point anchors about a line: their midpoint is held on
 /// the mirror's infinite carrier and their segment perpendicular to it.
 /// Both sides move minimally, like the other pick-based relations.
@@ -1992,12 +2072,22 @@ fn component_sketch(doc: &Document, seeds: &[EntityId]) -> CompSketch {
                     constraint_doc_idx.push(doc_idx);
                 }
             }
-            // Solver lowering lands in a follow-up task, on top of
-            // `Constraint::PointLineDistance` (the same primitive
-            // `LineDistance` already uses above, applied to a picked point
-            // instead of both of a line's endpoints). Until then the record
-            // persists and round-trips but isn't enforced.
-            ConstraintKind::PointLineDistance => {}
+            ConstraintKind::PointLineDistance => {
+                // PointOnLine with a non-zero gap. `PointLineDistance` is the
+                // same primitive `LineDistance` is built from -- there it is
+                // applied to both endpoints of a line, here to one anchor.
+                let (Some((ea, _)), Some(v)) = (c.pts, c.val) else {
+                    continue;
+                };
+                let (Some(pa), Some((b0, b1))) = (
+                    anchor_point_var(&mut s, sa, ea, doc_idx, &mut constraint_doc_idx),
+                    sb.and_then(|v| v.line()),
+                ) else {
+                    continue;
+                };
+                s.constrain(Constraint::PointLineDistance(pa, b0, b1, v));
+                constraint_doc_idx.push(doc_idx);
+            }
         }
     }
     CompSketch {
@@ -3851,5 +3941,37 @@ mod tests {
             before,
             "the impossible length is not left recorded"
         );
+    }
+
+    #[test]
+    fn point_line_distance_holds_the_point_off_the_line() {
+        // The point starts 4 above a horizontal line. Recording the relation
+        // at its current separation must be a no-op; dragging the LINE down
+        // must then carry the point with it, keeping the gap at 4.
+        let mut doc = Document::new();
+        let l = add_line(&mut doc, 0.0, 0.0, 10.0, 0.0);
+        let p = doc.add(EntityKind::Point(Point2d::from_f64(5.0, 4.0)));
+        constrain_point_line_distance(&mut doc, (p, 0), l, None, None)
+            .expect("recording the current separation must hold");
+
+        set_line(&mut doc, l, 0.0, -3.0, 10.0, -3.0);
+        assert!(resolve_after_edit(&mut doc, l, None));
+
+        let moved = point_of(&doc, p).expect("the point survives");
+        assert!(
+            ((moved.y - (-3.0)).abs() - 4.0).abs() < 1e-6,
+            "the point stays 4 from the line, got y = {}",
+            moved.y
+        );
+    }
+
+    #[test]
+    fn point_line_distance_refuses_a_zero_gap() {
+        // Zero separation is PointOnLine, not a driving distance -- the same
+        // rule `constrain_point_distance` already applies to its own kinds.
+        let mut doc = Document::new();
+        let l = add_line(&mut doc, 0.0, 0.0, 10.0, 0.0);
+        let p = doc.add(EntityKind::Point(Point2d::from_f64(5.0, 0.0)));
+        assert!(constrain_point_line_distance(&mut doc, (p, 0), l, None, None).is_err());
     }
 }
