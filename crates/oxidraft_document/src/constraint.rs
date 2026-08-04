@@ -71,6 +71,12 @@ pub enum ConstraintKind {
     /// record per member of a blocked group, all sharing the same `b`. The
     /// group keeps only its translate/rotate freedom.
     Block,
+    /// A point anchor on `a` (index in `pts.0`) held at a driving
+    /// perpendicular distance from the infinite line through line entity
+    /// `b`, stored in `val`. `pts.1` is unused by construction, the same
+    /// way [`ConstraintKind::PointOnLine`] leaves it unused — this is that
+    /// relation with a non-zero distance.
+    PointLineDistance,
 }
 
 impl ConstraintKind {
@@ -101,6 +107,7 @@ impl ConstraintKind {
             ConstraintKind::VDistance => "vertical distance",
             ConstraintKind::Symmetric => "symmetric",
             ConstraintKind::Block => "block",
+            ConstraintKind::PointLineDistance => "point-line distance",
         }
     }
 
@@ -126,6 +133,7 @@ impl ConstraintKind {
                 | ConstraintKind::VDistance
                 | ConstraintKind::Symmetric
                 | ConstraintKind::Block
+                | ConstraintKind::PointLineDistance
         )
     }
 
@@ -141,6 +149,7 @@ impl ConstraintKind {
                 | ConstraintKind::PointDistance
                 | ConstraintKind::HDistance
                 | ConstraintKind::VDistance
+                | ConstraintKind::PointLineDistance
         )
     }
 
@@ -159,6 +168,7 @@ impl ConstraintKind {
                 | ConstraintKind::HDistance
                 | ConstraintKind::VDistance
                 | ConstraintKind::Symmetric
+                | ConstraintKind::PointLineDistance
         )
     }
 
@@ -189,6 +199,7 @@ impl ConstraintKind {
             ConstraintKind::VDistance => "VDIST",
             ConstraintKind::Symmetric => "SYM",
             ConstraintKind::Block => "BLOCK",
+            ConstraintKind::PointLineDistance => "PLDIST",
         }
     }
 
@@ -219,9 +230,39 @@ impl ConstraintKind {
             "VDIST" => ConstraintKind::VDistance,
             "SYM" => ConstraintKind::Symmetric,
             "BLOCK" => ConstraintKind::Block,
+            "PLDIST" => ConstraintKind::PointLineDistance,
             _ => return None,
         })
     }
+
+    /// Every kind, so tests can walk the whole set. A new variant that is
+    /// left out of this list is a variant no exhaustive test covers.
+    pub const ALL: &'static [ConstraintKind] = &[
+        ConstraintKind::Horizontal,
+        ConstraintKind::Vertical,
+        ConstraintKind::Parallel,
+        ConstraintKind::Perpendicular,
+        ConstraintKind::EqualLength,
+        ConstraintKind::Coincident,
+        ConstraintKind::Tangent,
+        ConstraintKind::Radius,
+        ConstraintKind::Distance,
+        ConstraintKind::LineDistance,
+        ConstraintKind::Angle,
+        ConstraintKind::Fixed,
+        ConstraintKind::Concentric,
+        ConstraintKind::Collinear,
+        ConstraintKind::Midpoint,
+        ConstraintKind::EqualRadius,
+        ConstraintKind::PointOnLine,
+        ConstraintKind::PointOnCircle,
+        ConstraintKind::PointDistance,
+        ConstraintKind::HDistance,
+        ConstraintKind::VDistance,
+        ConstraintKind::Symmetric,
+        ConstraintKind::Block,
+        ConstraintKind::PointLineDistance,
+    ];
 }
 
 /// Folds an angle in degrees into the canonical (0, 180]: lines are
@@ -446,5 +487,39 @@ impl SketchConstraint {
             && self.b == Some(other.a)
             && self.pts.map(|(x, y)| (y, x)) == other.pts;
         straight || swapped
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_line_distance_is_an_anchored_valued_pair() {
+        // These three predicates are what drive serialization in
+        // `oxidraft_io::native` — an anchored+valued pair kind lands on the
+        // existing `C CODE ia ea ib eb v` line with no format change. Getting
+        // any of them wrong silently writes the wrong line shape.
+        let k = ConstraintKind::PointLineDistance;
+        assert!(k.is_pair(), "it relates a point anchor to a line entity");
+        assert!(k.is_valued(), "the driving distance lives in `val`");
+        assert!(k.has_anchors(), "the point anchor lives in `pts.0`");
+        assert_eq!(k.code(), "PLDIST");
+        assert_eq!(ConstraintKind::from_code("PLDIST"), Some(k));
+    }
+
+    #[test]
+    fn every_kind_round_trips_through_its_code() {
+        // `code()`/`from_code()` are a bijection or the loader drops records
+        // it just wrote. Adding a kind without a `from_code` entry is the
+        // exact mistake this catches.
+        for k in ConstraintKind::ALL {
+            assert_eq!(
+                ConstraintKind::from_code(k.code()),
+                Some(*k),
+                "{} does not round-trip through its code",
+                k.label()
+            );
+        }
     }
 }

@@ -198,9 +198,12 @@ impl Icon {
             // Driving dimensions. The radius/length pair reads as a padlock on
             // a measurement; the angular and free-form ones show the dimension.
             K::Radius => Icon::ConRadiusLock,
-            K::Distance | K::LineDistance | K::PointDistance | K::HDistance | K::VDistance => {
-                Icon::ConLengthLock
-            }
+            K::Distance
+            | K::LineDistance
+            | K::PointDistance
+            | K::HDistance
+            | K::VDistance
+            | K::PointLineDistance => Icon::ConLengthLock,
             K::Angle => Icon::ConAngle,
         }
     }

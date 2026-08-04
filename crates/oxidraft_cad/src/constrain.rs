@@ -183,6 +183,7 @@ pub fn constrain_lines(
         | ConstraintKind::PointDistance
         | ConstraintKind::HDistance
         | ConstraintKind::VDistance
+        | ConstraintKind::PointLineDistance
         | ConstraintKind::Symmetric => {
             Err(format!("{} is pick-based — pick its points on canvas", kind.label()).into())
         }
@@ -1389,6 +1390,7 @@ pub fn selection_validity(
         | ConstraintKind::PointDistance
         | ConstraintKind::HDistance
         | ConstraintKind::VDistance
+        | ConstraintKind::PointLineDistance
         | ConstraintKind::Symmetric => Ok(()),
     }
 }
@@ -1990,6 +1992,12 @@ fn component_sketch(doc: &Document, seeds: &[EntityId]) -> CompSketch {
                     constraint_doc_idx.push(doc_idx);
                 }
             }
+            // Solver lowering lands in a follow-up task, on top of
+            // `Constraint::PointLineDistance` (the same primitive
+            // `LineDistance` already uses above, applied to a picked point
+            // instead of both of a line's endpoints). Until then the record
+            // persists and round-trips but isn't enforced.
+            ConstraintKind::PointLineDistance => {}
         }
     }
     CompSketch {

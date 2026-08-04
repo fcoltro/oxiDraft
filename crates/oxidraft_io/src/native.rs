@@ -1351,6 +1351,39 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_point_line_distance_keeps_its_anchor_value_and_placement() {
+        // PLDIST is anchored AND valued, so it must land on the existing
+        // `C CODE ia ea ib eb v px py` line with no new format. This test is
+        // the whole proof that adding the kind needed no serializer change.
+        let mut doc = Document::new();
+        let l = doc.add(EntityKind::Curve(Curve::Line(LineSeg::from_endpoints(
+            pt_i(0, 0),
+            pt_i(10, 0),
+        ))));
+        let p = doc.add(EntityKind::Point(pt_i(3, 4)));
+        let mut c =
+            SketchConstraint::point_distance(ConstraintKind::PointLineDistance, p, 0, l, 0, 4.0);
+        c.place = Some((3.0, 2.0));
+        doc.add_constraint(c);
+
+        let doc2 = from_string(&to_string(&doc)).unwrap();
+        assert_eq!(doc2.constraints.len(), 1);
+        let got = doc2.constraints[0];
+        let ids: Vec<_> = doc2.iter().map(|e| e.id).collect();
+        assert_eq!(
+            (got.kind, got.a, got.b, got.pts, got.val, got.place),
+            (
+                ConstraintKind::PointLineDistance,
+                ids[1],
+                Some(ids[0]),
+                Some((0, 0)),
+                Some(4.0),
+                Some((3.0, 2.0))
+            )
+        );
+    }
+
+    #[test]
     fn roundtrip_symmetric_keeps_its_mirror_line() {
         let mut doc = Document::new();
         let mirror = doc.add(EntityKind::Curve(Curve::Line(LineSeg::from_endpoints(

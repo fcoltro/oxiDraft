@@ -100,6 +100,7 @@ fn remap_constraints_to_pieces(
             | ConstraintKind::PointDistance
             | ConstraintKind::HDistance
             | ConstraintKind::VDistance
+            | ConstraintKind::PointLineDistance
             | ConstraintKind::Symmetric
             | ConstraintKind::Block => {}
             ConstraintKind::Coincident => {

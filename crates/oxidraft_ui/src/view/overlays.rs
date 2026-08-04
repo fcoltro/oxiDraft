@@ -300,7 +300,8 @@ pub(super) fn badge_model(doc: &Document) -> BadgeModel {
             | ConstraintKind::Angle
             | ConstraintKind::PointDistance
             | ConstraintKind::HDistance
-            | ConstraintKind::VDistance => {
+            | ConstraintKind::VDistance
+            | ConstraintKind::PointLineDistance => {
                 if c.val.is_some() {
                     dim_badges.push(*c);
                 }
