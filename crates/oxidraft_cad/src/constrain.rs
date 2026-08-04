@@ -1362,9 +1362,11 @@ pub fn constrain_block(
     Ok(format!("Blocked {} object(s) as a rigid group", count + 1))
 }
 
-/// The current world position of a picked anchor: an endpoint, a line's
-/// midpoint, an arc's center, or a point entity.
-fn anchor_pos(doc: &Document, id: EntityId, idx: u8) -> Option<(f64, f64)> {
+/// World position of anchor `idx` on entity `id`: 0/1 an endpoint,
+/// [`ANCHOR_DERIVED`] a line's midpoint or an arc's centre; a point entity
+/// is its own anchor at any index. `None` when the entity is neither a
+/// point, a line, nor an arc.
+pub fn anchor_pos(doc: &Document, id: EntityId, idx: u8) -> Option<(f64, f64)> {
     if let Some(p) = point_of(doc, id) {
         return Some((p.x, p.y));
     }

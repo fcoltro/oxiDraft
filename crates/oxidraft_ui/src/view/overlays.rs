@@ -387,6 +387,81 @@ fn dim_badge_layout(app: &AppState, c: &SketchConstraint) -> Option<DimBadge> {
         let (x, y) = app.view.world_to_screen(wx, wy);
         pos2(x as f32, y as f32)
     };
+    // Anchored valued kinds resolve to two world points, not to a curve, so
+    // they are handled before the curve match below -- its `as_curve()?`
+    // returns None for a constraint anchored on a point entity, which is why
+    // these badges were collected and then never drawn.
+    //
+    // The measured span runs anchor -> anchor, except for PointLineDistance,
+    // where `b` is a whole line and the far end is the anchor's foot of
+    // perpendicular on it. H/VDistance measure only one axis, so their span
+    // is the projection, not the straight run between the anchors.
+    if matches!(
+        c.kind,
+        ConstraintKind::PointDistance
+            | ConstraintKind::HDistance
+            | ConstraintKind::VDistance
+            | ConstraintKind::PointLineDistance
+    ) {
+        let (ea, eb) = c.pts?;
+        let (ax, ay) = oxidraft_cad::anchor_pos(&app.document, c.a, ea)?;
+        let bid = c.b?;
+        let (bx, by) = if c.kind == ConstraintKind::PointLineDistance {
+            let Curve::Line(l) = app.document.get(bid)?.as_curve()? else {
+                return None;
+            };
+            let (ux, uy) = (l.p1.x - l.p0.x, l.p1.y - l.p0.y);
+            let n2 = ux * ux + uy * uy;
+            if n2 <= 1e-18 {
+                return None;
+            }
+            let t = ((ax - l.p0.x) * ux + (ay - l.p0.y) * uy) / n2;
+            (l.p0.x + ux * t, l.p0.y + uy * t)
+        } else {
+            let (rx, ry) = oxidraft_cad::anchor_pos(&app.document, bid, eb)?;
+            match c.kind {
+                ConstraintKind::HDistance => (rx, ay),
+                ConstraintKind::VDistance => (ax, ry),
+                _ => (rx, ry),
+            }
+        };
+        let a = px(ax, ay);
+        let b = px(bx, by);
+        if (b - a).length() < 12.0 {
+            return None;
+        }
+        let d = (b - a).normalized();
+        // Same offset convention as the Distance arm: the user's placement
+        // picks the side and the distance, otherwise sit above the span.
+        let mut n = vec2(d.y, -d.x);
+        let o = match c.place {
+            Some((wx, wy)) => {
+                let q = px(wx, wy);
+                if n.dot(q - a) < 0.0 {
+                    n = -n;
+                }
+                n.dot(q - a).max(12.0)
+            }
+            None => {
+                if n.y < 0.0 {
+                    n = -n;
+                }
+                22.0
+            }
+        };
+        let (ta, tb) = (a + n * o, b + n * o);
+        let label = units.format_measure(val, style.precision);
+        return Some(DimBadge {
+            lines: vec![
+                [a + n * 4.0, a + n * (o + 5.0)],
+                [b + n * 4.0, b + n * (o + 5.0)],
+                [ta, tb],
+            ],
+            arrows: vec![dim_arrow(ta, d), dim_arrow(tb, -d)],
+            text_rect: dim_label_rect(ta + (tb - ta) * 0.5 + n * 13.0, &label),
+            label,
+        });
+    }
     match (c.kind, app.document.get(c.a)?.as_curve()?) {
         (ConstraintKind::Distance, Curve::Line(l)) => {
             let a = px(l.p0.x, l.p0.y);
@@ -2710,6 +2785,37 @@ mod badge_tests {
         assert_eq!(g.kind, ConstraintKind::Angle);
         let v = g.val.expect("angle ghost is valued");
         assert!((v - 45.0).abs() < 1e-9, "measured angle: {v}");
+    }
+
+    #[test]
+    fn anchored_distance_badges_lay_out_instead_of_vanishing() {
+        // `dim_badge_layout` used to open with `get(c.a)?.as_curve()?`, so a
+        // constraint anchored on a POINT entity returned None before reaching
+        // any arm -- the badge was collected and then silently never drawn,
+        // taking its click-to-edit target with it.
+        let mut app = AppState::new(800.0, 600.0);
+        let l = app.add_entity(EntityKind::Curve(Curve::Line(LineSeg::from_endpoints(
+            Point2d::from_f64(0.0, 0.0),
+            Point2d::from_f64(10.0, 0.0),
+        ))));
+        let p = app.add_entity(EntityKind::Point(Point2d::from_f64(3.0, 4.0)));
+
+        for kind in [
+            ConstraintKind::PointDistance,
+            ConstraintKind::HDistance,
+            ConstraintKind::VDistance,
+            ConstraintKind::PointLineDistance,
+        ] {
+            let mut doc = app.document.clone();
+            doc.constraints.clear();
+            doc.add_constraint(SketchConstraint::point_distance(kind, p, 0, l, 0, 4.0));
+            app.document = doc;
+            assert!(
+                dim_badge_layout(&app, &app.document.constraints[0]).is_some(),
+                "{} must produce a drawable badge",
+                kind.label()
+            );
+        }
     }
 }
 
