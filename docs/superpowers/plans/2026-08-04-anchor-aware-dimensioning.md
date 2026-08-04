@@ -29,6 +29,11 @@
 | `oxidraft_cad/src/constrain.rs` | ~1985 | the real lowering arm (Task 2) |
 | `oxidraft_cad/src/edit.rs` | ~104 | join the no-op remap group |
 | `oxidraft_ui/src/view/overlays.rs` | ~320 | join the `dim_badges` group (Task 3) |
+| `oxidraft_ui/src/icons.rs` | ~201 | join the `ConLengthLock` group, per the spec |
+
+Two of these were missed when the table was first written and found by Task 1's
+implementer: `component_sketch` (stubbed inert there, filled in Task 2) and
+`icons.rs`. Both are already handled — later tasks must not redo them.
 
 ---
 
