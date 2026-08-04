@@ -544,6 +544,11 @@ In `dim_badge_layout` in `crates/oxidraft_ui/src/view/overlays.rs`, insert **bef
     // they are handled before the curve match below -- its `as_curve()?`
     // returns None for a constraint anchored on a point entity, which is why
     // these badges were collected and then never drawn.
+    //
+    // The measured span runs anchor -> anchor, except for PointLineDistance,
+    // where `b` is a whole line and the far end is the anchor's foot of
+    // perpendicular on it. H/VDistance measure only one axis, so their span
+    // is the projection, not the straight run between the anchors.
     if matches!(
         c.kind,
         ConstraintKind::PointDistance
@@ -551,14 +556,11 @@ In `dim_badge_layout` in `crates/oxidraft_ui/src/view/overlays.rs`, insert **bef
             | ConstraintKind::VDistance
             | ConstraintKind::PointLineDistance
     ) {
-        let (ea, _) = c.pts?;
+        let (ea, eb) = c.pts?;
         let (ax, ay) = oxidraft_cad::anchor_pos(&app.document, c.a, ea)?;
-        let b = c.b?;
-        // The far end is the other anchor, except for PointLineDistance,
-        // where `b` is a whole line and the measurement runs to its foot of
-        // perpendicular.
+        let bid = c.b?;
         let (bx, by) = if c.kind == ConstraintKind::PointLineDistance {
-            let Curve::Line(l) = app.document.get(b)?.as_curve()? else {
+            let Curve::Line(l) = app.document.get(bid)?.as_curve()? else {
                 return None;
             };
             let (ux, uy) = (l.p1.x - l.p0.x, l.p1.y - l.p0.y);
@@ -569,31 +571,53 @@ In `dim_badge_layout` in `crates/oxidraft_ui/src/view/overlays.rs`, insert **bef
             let t = ((ax - l.p0.x) * ux + (ay - l.p0.y) * uy) / n2;
             (l.p0.x + ux * t, l.p0.y + uy * t)
         } else {
-            let (_, eb) = c.pts?;
-            oxidraft_cad::anchor_pos(&app.document, b, eb)?
+            let (rx, ry) = oxidraft_cad::anchor_pos(&app.document, bid, eb)?;
+            match c.kind {
+                ConstraintKind::HDistance => (rx, ay),
+                ConstraintKind::VDistance => (ax, ry),
+                _ => (rx, ry),
+            }
         };
         let a = px(ax, ay);
-        let bp = px(bx, by);
-        let mid = pos2((a.x + bp.x) * 0.5, (a.y + bp.y) * 0.5);
-        let anchor = match c.place {
-            Some((wx, wy)) => px(wx, wy),
-            None => mid + egui::vec2(0.0, -18.0),
+        let b = px(bx, by);
+        if (b - a).length() < 12.0 {
+            return None;
+        }
+        let d = (b - a).normalized();
+        // Same offset convention as the Distance arm: the user's placement
+        // picks the side and the distance, otherwise sit above the span.
+        let mut n = vec2(d.y, -d.x);
+        let o = match c.place {
+            Some((wx, wy)) => {
+                let q = px(wx, wy);
+                if n.dot(q - a) < 0.0 {
+                    n = -n;
+                }
+                n.dot(q - a).max(12.0)
+            }
+            None => {
+                if n.y < 0.0 {
+                    n = -n;
+                }
+                22.0
+            }
         };
-        let text = format_dim_value(val, units, style);
+        let (ta, tb) = (a + n * o, b + n * o);
+        let label = units.format_measure(val, style.precision);
         return Some(DimBadge {
-            text_rect: egui::Rect::from_center_size(
-                anchor,
-                egui::vec2(dim_label_width(&text), 16.0),
-            ),
-            text,
-            a,
-            b: bp,
-            anchor,
+            lines: vec![
+                [a + n * 4.0, a + n * (o + 5.0)],
+                [b + n * 4.0, b + n * (o + 5.0)],
+                [ta, tb],
+            ],
+            arrows: vec![dim_arrow(ta, d), dim_arrow(tb, -d)],
+            text_rect: dim_label_rect(ta + (tb - ta) * 0.5 + n * 13.0, &label),
+            label,
         });
     }
 ```
 
-**Note for the implementer:** `DimBadge`'s exact field set and the helper names (`format_dim_value`, `dim_label_width`) must be read from the existing `Distance` arm directly above and matched — construct `DimBadge` with whatever fields that arm uses, using `a`/`bp`/`anchor` as computed here. Do not invent fields.
+`DimBadge` is `{ lines: Vec<[Pos2; 2]>, arrows: Vec<[Pos2; 3]>, label: String, text_rect: Rect }`; `dim_arrow`, `dim_label_rect`, and `units.format_measure(val, style.precision)` are the same helpers the `Distance` arm above uses. Do not invent fields or helpers.
 
 - [ ] **Step 5: Run the test**
 
