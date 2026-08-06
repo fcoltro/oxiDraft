@@ -168,12 +168,21 @@ impl AppState {
                     None => DimTarget::Entity(id),
                 };
                 // `pick` finds an entity by its *body*, so a click on a
-                // circle's centre reads as empty space to it — a whole
-                // radius from the only part of the circle it looks at. The
-                // widened search is what makes that click reach the circle
-                // at all, and only runs when nothing was under the cursor,
-                // so every click that already resolved to an entity still
-                // resolves to that same entity.
+                // circle's centre reads as nothing to it — a whole radius
+                // from the only part of the circle it looks at. The widened
+                // search is what lets that click reach the circle at all.
+                //
+                // It runs only where `pick` came back empty, which keeps a
+                // click that resolved to an entity resolving to that same
+                // entity — but "empty" is not the same as "empty space".
+                // `pick` also comes back empty when the nearest thing was
+                // the origin point, which it filters out, and a loaded
+                // drawing puts the origin last in `order`, so `pick_at`'s
+                // `.rev()` reaches it first. Within tolerance of the world
+                // origin, then, a click that used to resolve to nothing can
+                // now find an anchor. That is the path the centre of a
+                // circle drawn on the origin travels, so it is the feature
+                // working rather than an edge case to suppress.
                 let hit = pick(self)
                     .map(|id| classify(self, id))
                     .or_else(|| dim_anchor_near(self, px, py, tol));

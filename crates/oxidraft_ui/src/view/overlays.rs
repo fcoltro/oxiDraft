@@ -2647,10 +2647,15 @@ mod badge_tests {
         };
 
         // First pick holds the line — it may still pair with a second one.
-        app.handle_modify_click(&Point2d::from_f64(2.0, 0.0));
+        // Deliberately off the midpoint: an anchor within tolerance reads as
+        // that *point* rather than the line, and this is the only place the
+        // whole-line reading is exercised end to end. Clicking (2.0, 0.0) —
+        // the exact midpoint — banks an `Anchor` instead and leaves the
+        // `Entity`-on-a-line path covered by nothing.
+        app.handle_modify_click(&Point2d::from_f64(1.0, 0.0));
         assert!(
-            matches!(app.tool, Tool::DimConstraint { first: Some(t), pending: None } if t.entity() == a),
-            "line waits in `first`: {:?}",
+            matches!(app.tool, Tool::DimConstraint { first: Some(DimTarget::Entity(id)), pending: None } if id == a),
+            "the whole line waits in `first`: {:?}",
             app.tool
         );
 

@@ -5624,4 +5624,65 @@ mod tests {
             a.tool
         );
     }
+
+    #[test]
+    fn a_held_arc_anchor_still_places_its_radius_rather_than_pairing_with_a_line() {
+        // Pairing is a line-with-line gesture — the only pair `smart_dimension`
+        // can record. `first` could only ever hold a line before, so that went
+        // without saying; it can hold a point anchor now, and an arc endpoint
+        // banked there must still fall through to the arc's own radius, which
+        // is what the same two clicks produced before the pick model changed.
+        let mut a = app();
+        let arc = a.add_entity(EntityKind::Curve(Curve::Arc(
+            oxidraft_geometry::CircularArc::new(
+                Point2d::from_f64(0.0, 0.0),
+                5.0,
+                0.0,
+                std::f64::consts::FRAC_PI_2,
+            ),
+        )));
+        a.add_entity(EntityKind::Curve(Curve::Line(LineSeg::from_endpoints(
+            Point2d::from_f64(10.0, -5.0),
+            Point2d::from_f64(10.0, 5.0),
+        ))));
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+
+        // The arc's start endpoint: a point on the arc, so it banks as one.
+        let (sx, sy) = a.view.world_to_screen(5.0, 0.0);
+        a.canvas_click(sx, sy);
+        assert!(
+            matches!(
+                a.tool,
+                crate::tools::Tool::DimConstraint {
+                    first: Some(crate::tools::DimTarget::Anchor(id, _, _)),
+                    ..
+                } if id == arc
+            ),
+            "an arc endpoint banks as an anchor, got {:?}",
+            a.tool
+        );
+
+        // A line's body, clear of its own anchors — nothing to pair with.
+        let (lx, ly) = a.view.world_to_screen(10.0, 2.0);
+        a.canvas_click(lx, ly);
+        assert!(
+            a.document
+                .constraints
+                .iter()
+                .any(|c| c.kind == ConstraintKind::Radius && c.a == arc),
+            "the second click placed the arc's radius: {:?}",
+            a.document.constraints
+        );
+        assert!(
+            !a.document
+                .constraints
+                .iter()
+                .any(|c| c.kind == ConstraintKind::Angle),
+            "an arc and a line are not an angle this tool can record: {:?}",
+            a.document.constraints
+        );
+    }
 }
