@@ -2810,19 +2810,33 @@ mod badge_tests {
         ))));
         let p = app.add_entity(EntityKind::Point(Point2d::from_f64(3.0, 4.0)));
 
-        for kind in [
-            ConstraintKind::PointDistance,
-            ConstraintKind::HDistance,
-            ConstraintKind::VDistance,
-            ConstraintKind::PointLineDistance,
+        // Laying out at all is only half of it: H and V measure one axis
+        // each, so a badge that drew the straight run between the anchors --
+        // or projected onto the wrong axis -- would still be `Some`. The
+        // spans below say which axis each kind is expected to span, from the
+        // point (3, 4) to the line's endpoint (0, 0): horizontal-only for
+        // HDistance, vertical-only for VDistance and for the perpendicular
+        // foot PointLineDistance measures to, and neither for the aligned
+        // run PointDistance measures.
+        for (kind, dx, dy) in [
+            (ConstraintKind::PointDistance, true, true),
+            (ConstraintKind::HDistance, true, false),
+            (ConstraintKind::VDistance, false, true),
+            (ConstraintKind::PointLineDistance, false, true),
         ] {
             let mut doc = app.document.clone();
             doc.constraints.clear();
             doc.add_constraint(SketchConstraint::point_distance(kind, p, 0, l, 0, 4.0));
             app.document = doc;
-            assert!(
-                dim_badge_layout(&app, &app.document.constraints[0]).is_some(),
-                "{} must produce a drawable badge",
+            let badge = dim_badge_layout(&app, &app.document.constraints[0])
+                .unwrap_or_else(|| panic!("{} must produce a drawable badge", kind.label()));
+            // Two extension lines, then the dimension line itself, which is
+            // the measured span offset onto its side.
+            let [ta, tb] = badge.lines[2];
+            assert_eq!(
+                ((tb.x - ta.x).abs() > 1.0, (tb.y - ta.y).abs() > 1.0),
+                (dx, dy),
+                "{} spans the wrong axis: {ta:?} -> {tb:?}",
                 kind.label()
             );
         }

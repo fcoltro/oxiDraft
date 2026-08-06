@@ -6,7 +6,7 @@
 
 use crate::command::{Command, CoordInput, parse_command, parse_coordinate};
 use crate::history::History;
-use crate::tools::{Tool, ToolEvent};
+use crate::tools::{DimTarget, Tool, ToolEvent};
 use crate::view_transform::ViewTransform;
 use oxidraft_cad::{
     Grip, Guide, SnapPoint, SnapSettings, apply_grip, best_snap, edit, find_snaps_excluding,
@@ -2152,6 +2152,67 @@ impl AppState {
         {
             c.place = place;
         }
+        self.finish_smart_dimension(doc, res, kind, a, b)
+    }
+
+    /// Smart Dimension's commit over [`DimTarget`]s: the resolution table
+    /// from the design. Two entities behave exactly as [`Self::smart_dimension`]
+    /// always did; a pair of anchors becomes a driving point distance, whose
+    /// kind the placement click chooses the same way drafting dimensions
+    /// already choose aligned/horizontal/vertical.
+    pub fn smart_dimension_targets(
+        &mut self,
+        a: DimTarget,
+        b: Option<DimTarget>,
+        place: Option<(f64, f64)>,
+    ) -> bool {
+        match (a, b) {
+            (DimTarget::Anchor(ia, ea, pa), Some(DimTarget::Anchor(ib, eb, pb))) => {
+                // `linear_orientation` reads the placement's offset from the
+                // span's midpoint: mostly sideways means the dimension line
+                // stands beside the span and measures the vertical gap,
+                // mostly above/below means it lies along it and measures the
+                // horizontal one. Neither, and the run between the points is
+                // what was meant. Same call the annotation tool makes, so
+                // the two gestures read a placement identically.
+                let kind = match place {
+                    Some((lx, ly)) => match oxidraft_document::linear_orientation(
+                        pa,
+                        pb,
+                        Point2d::from_f64(lx, ly),
+                    ) {
+                        Some(true) => ConstraintKind::VDistance,
+                        Some(false) => ConstraintKind::HDistance,
+                        None => ConstraintKind::PointDistance,
+                    },
+                    None => ConstraintKind::PointDistance,
+                };
+                let mut doc = self.document.clone();
+                let res = oxidraft_cad::constrain_point_distance(
+                    &mut doc,
+                    kind,
+                    (ia, ea),
+                    (ib, eb),
+                    None,
+                    place,
+                );
+                self.finish_smart_dimension(doc, res, kind, ia, Some(ib))
+            }
+            // Entity-level picks keep the behaviour they always had.
+            (a, b) => self.smart_dimension(a.entity(), b.map(DimTarget::entity), place),
+        }
+    }
+
+    /// Commits a freshly built dimension and, on success, stashes it in
+    /// `pending_dim_edit` so the UI opens its value editor immediately.
+    fn finish_smart_dimension(
+        &mut self,
+        doc: Document,
+        res: Result<String, oxidraft_cad::ConstrainError>,
+        kind: ConstraintKind,
+        a: EntityId,
+        b: Option<EntityId>,
+    ) -> bool {
         if self.commit_constraint(doc, res) {
             self.prefs.show_constraints = true;
             self.pending_dim_edit = self
@@ -5683,6 +5744,181 @@ mod tests {
                 .any(|c| c.kind == ConstraintKind::Angle),
             "an arc and a line are not an angle this tool can record: {:?}",
             a.document.constraints
+        );
+    }
+
+    #[test]
+    fn dimensioning_between_two_circle_centres_picks_the_kind_from_the_placement() {
+        // The originally reported case. The placement click chooses among
+        // the three kinds exactly the way drafting dimensions already do:
+        // diagonal is the aligned distance, above/below is horizontal-only,
+        // off to the side is vertical-only.
+        //
+        // The measured value is asserted alongside the kind because the kind
+        // alone cannot tell a correct axis choice from a swapped one: the
+        // centres are 10 apart in x and 8 in y, so an H that measured 8 or a
+        // V that measured 10 would name the right kind over the wrong span.
+        for (place, want, span) in [
+            (
+                (6.0, 6.0),
+                ConstraintKind::PointDistance,
+                10.0f64.hypot(8.0),
+            ),
+            ((5.0, 20.0), ConstraintKind::HDistance, 10.0),
+            ((20.0, 4.0), ConstraintKind::VDistance, 8.0),
+        ] {
+            let mut a = app();
+            let c1 = a.add_entity(EntityKind::Curve(Curve::Arc(
+                oxidraft_geometry::CircularArc::new(
+                    Point2d::from_f64(0.0, 0.0),
+                    2.0,
+                    0.0,
+                    std::f64::consts::TAU,
+                ),
+            )));
+            let c2 = a.add_entity(EntityKind::Curve(Curve::Arc(
+                oxidraft_geometry::CircularArc::new(
+                    Point2d::from_f64(10.0, 8.0),
+                    2.0,
+                    0.0,
+                    std::f64::consts::TAU,
+                ),
+            )));
+            let t1 = DimTarget::Anchor(
+                c1,
+                oxidraft_document::ANCHOR_DERIVED,
+                Point2d::from_f64(0.0, 0.0),
+            );
+            let t2 = DimTarget::Anchor(
+                c2,
+                oxidraft_document::ANCHOR_DERIVED,
+                Point2d::from_f64(10.0, 8.0),
+            );
+
+            assert!(
+                a.smart_dimension_targets(t1, Some(t2), Some(place)),
+                "centre-to-centre dimension must be created"
+            );
+            let got = a
+                .document
+                .constraints
+                .iter()
+                .find(|c| c.val.is_some())
+                .expect("a driving constraint was recorded");
+            assert_eq!(got.kind, want, "placement {place:?} chose the wrong kind");
+            assert!(
+                (got.val.expect("driving") - span).abs() < 1e-9,
+                "placement {place:?} measured {:?}, wanted {span}",
+                got.val
+            );
+            assert_eq!(got.place, Some(place), "the placement must be stored");
+            assert_eq!(
+                a.pending_dim_edit.map(|c| c.kind),
+                Some(want),
+                "the value editor must open on the new dimension"
+            );
+        }
+    }
+
+    #[test]
+    fn two_centre_clicks_and_a_placement_click_dimension_between_the_centres() {
+        // The same case as above, but driven the way a user drives it. Only
+        // the click path exercises the dispatch: banking the first anchor,
+        // pairing the second with it, and committing on the placement click.
+        let mut a = app();
+        for (cx, cy) in [(1.0, 0.0), (3.0, 2.0)] {
+            a.add_entity(EntityKind::Curve(Curve::Arc(
+                oxidraft_geometry::CircularArc::new(
+                    Point2d::from_f64(cx, cy),
+                    0.5,
+                    0.0,
+                    std::f64::consts::TAU,
+                ),
+            )));
+        }
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+
+        // Both centres, then a placement well above the span — which reads
+        // as the horizontal separation, 3 - 1.
+        for (wx, wy) in [(1.0, 0.0), (3.0, 2.0), (2.0, 4.0)] {
+            let (sx, sy) = a.view.world_to_screen(wx, wy);
+            a.canvas_click(sx, sy);
+        }
+
+        let got = a
+            .document
+            .constraints
+            .iter()
+            .find(|c| c.val.is_some())
+            .expect("three clicks recorded a driving dimension");
+        assert_eq!(got.kind, ConstraintKind::HDistance);
+        assert!(
+            (got.val.expect("driving") - 2.0).abs() < 1e-9,
+            "measured {:?}, wanted the 2-unit horizontal gap",
+            got.val
+        );
+    }
+
+    #[test]
+    fn two_point_entities_can_be_dimensioned_between() {
+        // A standalone point had no dimension of its own, so the tool used to
+        // refuse it outright. It has one now — the distance to another point —
+        // so the pick is accepted. The origin stays unpickable, because `pick`
+        // filters it and the widened anchor search still skips point entities.
+        let mut a = app();
+        a.add_entity(EntityKind::Point(Point2d::from_f64(1.0, 0.0)));
+        a.add_entity(EntityKind::Point(Point2d::from_f64(3.0, 2.0)));
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+
+        // Both points, then a placement off to the side — the vertical gap.
+        for (wx, wy) in [(1.0, 0.0), (3.0, 2.0), (6.0, 1.0)] {
+            let (sx, sy) = a.view.world_to_screen(wx, wy);
+            a.canvas_click(sx, sy);
+        }
+
+        let got = a
+            .document
+            .constraints
+            .iter()
+            .find(|c| c.val.is_some())
+            .expect("three clicks recorded a driving dimension");
+        assert_eq!(got.kind, ConstraintKind::VDistance);
+        assert!(
+            (got.val.expect("driving") - 2.0).abs() < 1e-9,
+            "measured {:?}, wanted the 2-unit vertical gap",
+            got.val
+        );
+    }
+
+    #[test]
+    fn a_click_on_the_world_origin_dimensions_nothing() {
+        // The origin is the one point every drawing has, and it sits where
+        // users click by accident. `pick` filters it out and `dim_anchor_near`
+        // does not look at point entities, so admitting point picks above must
+        // not have opened a path to it.
+        let mut a = app();
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+        let (sx, sy) = a.view.world_to_screen(0.0, 0.0);
+        a.canvas_click(sx, sy);
+        assert!(
+            matches!(
+                a.tool,
+                crate::tools::Tool::DimConstraint {
+                    first: None,
+                    pending: None
+                }
+            ),
+            "the origin must not bank as a pick, got {:?}",
+            a.tool
         );
     }
 }

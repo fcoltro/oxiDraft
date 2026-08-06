@@ -190,7 +190,7 @@ impl AppState {
                     // A fully picked dimension is following the cursor —
                     // this click drops it wherever it lands, entity or not.
                     (_, Some((a, b)), _) => {
-                        self.smart_dimension(a.entity(), b.map(DimTarget::entity), Some((px, py)));
+                        self.smart_dimension_targets(a, b, Some((px, py)));
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
@@ -201,7 +201,17 @@ impl AppState {
                     // line), or a point anchor (with another point). A whole
                     // circle/arc pairs with nothing, so its radius preview
                     // starts following the cursor right away.
-                    (None, None, Some(t)) if is_dimensionable(self, t.entity()) => {
+                    //
+                    // An anchor is accepted whatever it sits on, where an
+                    // entity pick still has to be dimensionable in its own
+                    // right. `weld_anchor_at` only ever yields anchors on
+                    // points, lines and arcs, so the one thing this newly
+                    // admits is a standalone point entity — which now has a
+                    // dimension it can take part in, and did not before.
+                    (None, None, Some(t))
+                        if matches!(t, DimTarget::Anchor(..))
+                            || is_dimensionable(self, t.entity()) =>
+                    {
                         let pairable = matches!(t, DimTarget::Anchor(..))
                             || line_endpoints_of(self, t.entity()).is_some();
                         self.tool = if pairable {
@@ -225,6 +235,24 @@ impl AppState {
                                 .into(),
                         );
                     }
+                    // A second point → the two anchors follow the cursor
+                    // until placed, and the placement click is what chooses
+                    // among aligned, horizontal and vertical. Two anchors on
+                    // the same entity are still two points (a line's own
+                    // endpoints, an arc's chord), so only naming the very
+                    // same point twice falls through — that is a pick this
+                    // tool cannot dimension, and it drops to the held pick's
+                    // own dimension below.
+                    (
+                        Some(a @ DimTarget::Anchor(ia, ea, _)),
+                        None,
+                        Some(t @ DimTarget::Anchor(ib, eb, _)),
+                    ) if (ia, ea) != (ib, eb) => {
+                        self.tool = Tool::DimConstraint {
+                            first: None,
+                            pending: Some((a, Some(t))),
+                        };
+                    }
                     // A second line → the pair (angle, or width when
                     // parallel) follows the cursor until placed. Both sides
                     // have to be lines, which used to go without saying:
@@ -245,7 +273,7 @@ impl AppState {
                     // Empty space, the same line, or a second pick that
                     // cannot pair → place the held pick's own dimension here.
                     (Some(a), None, _) => {
-                        self.smart_dimension(a.entity(), None, Some((px, py)));
+                        self.smart_dimension_targets(a, None, Some((px, py)));
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
