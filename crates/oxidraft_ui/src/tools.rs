@@ -65,6 +65,30 @@ pub fn point_on_kind(target: &Curve, click: Point2d, tol: f64) -> Option<Constra
     }
 }
 
+/// One thing Smart Dimension has picked: a whole entity, or a point on one.
+///
+/// The distinction is what makes dimensioning to a circle's centre possible
+/// at all — before this, the tool was typed over `EntityId` and had no way
+/// to name a point *on* an entity. `Anchor` carries its resolved world
+/// position inline for the same reason [`TanAnchor`] does: the preview and
+/// the commit then need no document to look it up from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DimTarget {
+    /// The entity itself — a line (its length) or a circle/arc (its radius).
+    Entity(EntityId),
+    /// A point anchor: entity, anchor index, resolved world position.
+    Anchor(EntityId, u8, Point2d),
+}
+
+impl DimTarget {
+    /// The entity this target names, whichever kind it is.
+    pub fn entity(self) -> EntityId {
+        match self {
+            DimTarget::Entity(id) | DimTarget::Anchor(id, _, _) => id,
+        }
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Tool {
@@ -125,12 +149,14 @@ pub enum Tool {
     /// Smart dimensioning that adds *driving* constraints (not drafting
     /// annotations): click a line for a driving length, a circle/arc for a
     /// radius, two parallel lines for a width, or two crossing lines for an
-    /// angle. `first` holds a line picked so far (it may still pair with a
-    /// second line); `pending` holds fully picked geometry whose dimension
-    /// preview follows the cursor until the placement click drops it.
+    /// angle. `first` holds a pick that may still pair with a second one (a
+    /// line, or a point anchor such as a circle's centre); `pending` holds
+    /// fully picked geometry whose dimension preview follows the cursor
+    /// until the placement click drops it. Both sides are [`DimTarget`]s
+    /// rather than bare ids, which is what lets a pick name a point.
     DimConstraint {
-        first: Option<EntityId>,
-        pending: Option<(EntityId, Option<EntityId>)>,
+        first: Option<DimTarget>,
+        pending: Option<(DimTarget, Option<DimTarget>)>,
     },
     /// Pick-based coincident weld: click two points — a line endpoint or
     /// midpoint, an arc/circle center, or a point entity like the origin —

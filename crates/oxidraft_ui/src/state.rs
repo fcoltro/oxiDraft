@@ -5557,4 +5557,71 @@ mod tests {
             Some(Curve::Arc(_))
         ));
     }
+
+    #[test]
+    fn smart_dimension_reads_a_centre_snap_as_an_anchor() {
+        // The whole point of the feature: clicking a circle's centre must
+        // mean "this point", while clicking its rim still means "this
+        // circle's radius". `weld_anchor_at` is what separates them -- the
+        // same helper Weld and ConPick already classify picks with.
+        let mut a = app();
+        let c = a.add_entity(EntityKind::Curve(Curve::Arc(
+            oxidraft_geometry::CircularArc::new(
+                Point2d::from_f64(0.0, 0.0),
+                5.0,
+                0.0,
+                std::f64::consts::TAU,
+            ),
+        )));
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+
+        let (sx, sy) = a.view.world_to_screen(0.0, 0.0);
+        a.canvas_click(sx, sy);
+        assert!(
+            matches!(
+                a.tool,
+                crate::tools::Tool::DimConstraint {
+                    first: Some(crate::tools::DimTarget::Anchor(id, _, _)),
+                    ..
+                } if id == c
+            ),
+            "a centre click must bank an Anchor, got {:?}",
+            a.tool
+        );
+    }
+
+    #[test]
+    fn smart_dimension_still_reads_a_rim_click_as_the_whole_circle() {
+        // Guards the existing behaviour the new pick model must not break.
+        let mut a = app();
+        let c = a.add_entity(EntityKind::Curve(Curve::Arc(
+            oxidraft_geometry::CircularArc::new(
+                Point2d::from_f64(0.0, 0.0),
+                5.0,
+                0.0,
+                std::f64::consts::TAU,
+            ),
+        )));
+        a.tool = crate::tools::Tool::DimConstraint {
+            first: None,
+            pending: None,
+        };
+
+        let (sx, sy) = a.view.world_to_screen(5.0, 0.0);
+        a.canvas_click(sx, sy);
+        assert!(
+            matches!(
+                a.tool,
+                crate::tools::Tool::DimConstraint {
+                    pending: Some((crate::tools::DimTarget::Entity(id), None)),
+                    ..
+                } if id == c
+            ),
+            "a rim click must still mean the whole circle, got {:?}",
+            a.tool
+        );
+    }
 }

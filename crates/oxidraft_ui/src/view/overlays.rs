@@ -6,7 +6,7 @@
 use super::UiState;
 use super::render::corner_glass_frame;
 use crate::state::AppState;
-use crate::tools::Tool;
+use crate::tools::{DimTarget, Tool};
 use egui::{Color32, Stroke, pos2, vec2};
 use oxidraft_document::{
     ANCHOR_DERIVED, ConstraintKind, Document, EntityId, EntityKind, SketchConstraint,
@@ -719,9 +719,13 @@ pub(super) fn smart_dim_preview(painter: &egui::Painter, app: &AppState, origin:
     let Tool::DimConstraint { first, pending } = &app.tool else {
         return;
     };
+    // A target that names a point still ghosts as its entity's own
+    // dimension, because that is still what the placement click records —
+    // the preview and the commit read a pick the same way, or the ghost
+    // would be advertising something else.
     let (a, b) = match (first, pending) {
-        (_, Some((a, b))) => (*a, *b),
-        (Some(a), None) => (*a, None),
+        (_, Some((a, b))) => (a.entity(), b.map(DimTarget::entity)),
+        (Some(a), None) => (a.entity(), None),
         (None, None) => return,
     };
     let Some(c) = smart_dim_ghost(app, a, b) else {
@@ -2645,7 +2649,7 @@ mod badge_tests {
         // First pick holds the line — it may still pair with a second one.
         app.handle_modify_click(&Point2d::from_f64(2.0, 0.0));
         assert!(
-            matches!(app.tool, Tool::DimConstraint { first: Some(id), pending: None } if id == a),
+            matches!(app.tool, Tool::DimConstraint { first: Some(t), pending: None } if t.entity() == a),
             "line waits in `first`: {:?}",
             app.tool
         );
@@ -2656,7 +2660,8 @@ mod badge_tests {
         assert!(
             matches!(
                 app.tool,
-                Tool::DimConstraint { first: None, pending: Some((x, Some(y))) } if x == a && y == b
+                Tool::DimConstraint { first: None, pending: Some((x, Some(y))) }
+                    if x.entity() == a && y.entity() == b
             ),
             "the pair waits for placement: {:?}",
             app.tool
@@ -2707,7 +2712,7 @@ mod badge_tests {
         assert!(
             matches!(
                 app.tool,
-                Tool::DimConstraint { first: None, pending: Some((id, None)) } if id == c_ent
+                Tool::DimConstraint { first: None, pending: Some((t, None)) } if t.entity() == c_ent
             ),
             "circle goes straight to the placement leg: {:?}",
             app.tool

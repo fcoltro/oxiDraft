@@ -4,7 +4,7 @@
 //! committing them to the document through [`AppState`]'s undo history.
 
 use super::AppState;
-use crate::tools::Tool;
+use crate::tools::{DimTarget, Tool};
 use oxidraft_cad::pick_at;
 use oxidraft_document::{ANCHOR_DERIVED, EntityId, EntityKind};
 use oxidraft_geometry::{Curve, Point2d};
@@ -156,37 +156,60 @@ impl AppState {
                 true
             }
             Tool::DimConstraint { first, pending } => {
-                let hit = pick(self);
+                // An anchor within tolerance means the click was aimed at a
+                // point on the entity, not the entity itself — the same rule
+                // Weld and ConPick already use, through the same helper.
+                // Unlike them this tool takes no object snaps (see
+                // `Tool::wants_point_snap`), so nothing nudges the click onto
+                // the anchor first: `tol` is doing the whole job, and it is
+                // the same tolerance that decided what was picked at all.
+                let classify = |s: &Self, id: EntityId| match weld_anchor_at(s, id, px, py, tol) {
+                    Some((idx, pos)) => DimTarget::Anchor(id, idx, pos),
+                    None => DimTarget::Entity(id),
+                };
+                // `pick` finds an entity by its *body*, so a click on a
+                // circle's centre reads as empty space to it — a whole
+                // radius from the only part of the circle it looks at. The
+                // widened search is what makes that click reach the circle
+                // at all, and only runs when nothing was under the cursor,
+                // so every click that already resolved to an entity still
+                // resolves to that same entity.
+                let hit = pick(self)
+                    .map(|id| classify(self, id))
+                    .or_else(|| dim_anchor_near(self, px, py, tol));
                 match (first, pending, hit) {
                     // A fully picked dimension is following the cursor —
                     // this click drops it wherever it lands, entity or not.
                     (_, Some((a, b)), _) => {
-                        self.smart_dimension(a, b, Some((px, py)));
+                        self.smart_dimension(a.entity(), b.map(DimTarget::entity), Some((px, py)));
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
                         };
                     }
-                    // First pick: a line may still pair with a second line,
-                    // so it waits in `first`; a circle/arc pairs with
-                    // nothing, so its radius preview starts following the
-                    // cursor right away.
-                    (None, None, Some(id)) if is_dimensionable(self, id) => {
-                        self.tool = if line_endpoints_of(self, id).is_some() {
+                    // First pick: anything that could still pair with a
+                    // second pick waits in `first` — a line (with another
+                    // line), or a point anchor (with another point). A whole
+                    // circle/arc pairs with nothing, so its radius preview
+                    // starts following the cursor right away.
+                    (None, None, Some(t)) if is_dimensionable(self, t.entity()) => {
+                        let pairable = matches!(t, DimTarget::Anchor(..))
+                            || line_endpoints_of(self, t.entity()).is_some();
+                        self.tool = if pairable {
                             Tool::DimConstraint {
-                                first: Some(id),
+                                first: Some(t),
                                 pending: None,
                             }
                         } else {
                             Tool::DimConstraint {
                                 first: None,
-                                pending: Some((id, None)),
+                                pending: Some((t, None)),
                             }
                         };
                     }
                     // A polyline pick is a dead end today — say how to fix
                     // it instead of silently ignoring the click.
-                    (None, None, Some(id)) if is_polycurve(self, id) => {
+                    (None, None, Some(t)) if is_polycurve(self, t.entity()) => {
                         self.problem(
                             "Polylines can't take dimensions. Run Disjoint (Shift+X) to break \
                              it into welded lines first."
@@ -194,19 +217,26 @@ impl AppState {
                         );
                     }
                     // A second line → the pair (angle, or width when
-                    // parallel) follows the cursor until placed.
-                    (Some(a), None, Some(id))
-                        if id != a && line_endpoints_of(self, id).is_some() =>
+                    // parallel) follows the cursor until placed. Both sides
+                    // have to be lines, which used to go without saying:
+                    // `first` could only ever hold one. It can hold a point
+                    // anchor now, and a point pairs with a line as nothing
+                    // this tool can yet record, so the invariant is spelled
+                    // out rather than assumed.
+                    (Some(a), None, Some(t))
+                        if t.entity() != a.entity()
+                            && line_endpoints_of(self, a.entity()).is_some()
+                            && line_endpoints_of(self, t.entity()).is_some() =>
                     {
                         self.tool = Tool::DimConstraint {
                             first: None,
-                            pending: Some((a, Some(id))),
+                            pending: Some((a, Some(t))),
                         };
                     }
-                    // Empty space, the same line, or a non-line second pick
-                    // → place the held line's length here.
+                    // Empty space, the same line, or a second pick that
+                    // cannot pair → place the held pick's own dimension here.
                     (Some(a), None, _) => {
-                        self.smart_dimension(a, None, Some((px, py)));
+                        self.smart_dimension(a.entity(), None, Some((px, py)));
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
@@ -762,6 +792,33 @@ fn weld_anchor_at(
         }
     }
     best.map(|(_, i, (x, y))| (i, Point2d::from_f64(x, y)))
+}
+
+/// Nearest weldable anchor to the click on anything Smart Dimension can
+/// dimension, searched across the drawing rather than on one known entity.
+///
+/// [`weld_anchor_at`] answers "which anchor of *this* entity", which needs
+/// the entity to have been found first — and `pick_at` finds an entity by
+/// its body, so a circle's centre is a whole radius away from anything it
+/// looks at. Without this, the one pick the anchored dimension exists for
+/// would read as empty space. Restricted to dimensionable entities, so it
+/// can only ever hand the tool something it could already have been given.
+fn dim_anchor_near(app: &AppState, px: f64, py: f64, tol: f64) -> Option<DimTarget> {
+    let click = Point2d::from_f64(px, py);
+    let mut best: Option<(f64, DimTarget)> = None;
+    for id in app.document.editable_entities().map(|e| e.id) {
+        if !is_dimensionable(app, id) {
+            continue;
+        }
+        let Some((idx, pos)) = weld_anchor_at(app, id, px, py, tol) else {
+            continue;
+        };
+        let d = pos.dist_f64(&click);
+        if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+            best = Some((d, DimTarget::Anchor(id, idx, pos)));
+        }
+    }
+    best.map(|(_, t)| t)
 }
 
 fn circle_center_radius(c: &oxidraft_geometry::Curve) -> Option<(Point2d, f64)> {
