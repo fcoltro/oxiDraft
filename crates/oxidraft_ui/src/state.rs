@@ -2198,6 +2198,34 @@ impl AppState {
                 );
                 self.finish_smart_dimension(doc, res, kind, ia, Some(ib))
             }
+            // A point and a line, in either pick order — the relation is the
+            // same, so normalise it to anchor-first.
+            (DimTarget::Anchor(ia, ea, _), Some(DimTarget::Entity(lb)))
+            | (DimTarget::Entity(lb), Some(DimTarget::Anchor(ia, ea, _))) => {
+                if !line_endpoints_of_doc(&self.document, lb) {
+                    self.problem(
+                        "Dimension a point to a line. Point-to-circle distance isn't \
+                         supported yet — dimension the circle's centre instead."
+                            .into(),
+                    );
+                    return false;
+                }
+                let mut doc = self.document.clone();
+                let res = oxidraft_cad::constrain_point_line_distance(
+                    &mut doc,
+                    (ia, ea),
+                    lb,
+                    None,
+                    place,
+                );
+                self.finish_smart_dimension(
+                    doc,
+                    res,
+                    ConstraintKind::PointLineDistance,
+                    ia,
+                    Some(lb),
+                )
+            }
             // Entity-level picks keep the behaviour they always had.
             (a, b) => self.smart_dimension(a.entity(), b.map(DimTarget::entity), place),
         }
@@ -3209,6 +3237,12 @@ impl AppState {
         }
         out
     }
+}
+
+/// Whether `id` is a plain line segment — the only thing a point-line
+/// distance can measure to.
+fn line_endpoints_of_doc(doc: &Document, id: EntityId) -> bool {
+    matches!(doc.get(id).and_then(|e| e.as_curve()), Some(Curve::Line(_)))
 }
 
 #[cfg(test)]
@@ -5920,5 +5954,51 @@ mod tests {
             "the origin must not bank as a pick, got {:?}",
             a.tool
         );
+    }
+
+    #[test]
+    fn dimensioning_a_point_to_a_line_records_a_point_line_distance() {
+        use crate::tools::DimTarget;
+        let mut a = app();
+        let l = a.add_entity(EntityKind::Curve(Curve::Line(LineSeg::from_endpoints(
+            Point2d::from_f64(0.0, 0.0),
+            Point2d::from_f64(10.0, 0.0),
+        ))));
+        let p = a.add_entity(EntityKind::Point(Point2d::from_f64(5.0, 4.0)));
+
+        assert!(a.smart_dimension_targets(
+            DimTarget::Anchor(p, 0, Point2d::from_f64(5.0, 4.0)),
+            Some(DimTarget::Entity(l)),
+            Some((5.0, 2.0)),
+        ));
+        assert!(
+            a.document
+                .constraints
+                .iter()
+                .any(|c| c.kind == ConstraintKind::PointLineDistance && c.val.is_some()),
+            "a PLDIST must be recorded"
+        );
+    }
+
+    #[test]
+    fn dimensioning_a_point_to_a_circle_is_refused() {
+        // Point-to-rim would be a fifth kind and is deliberately out of
+        // scope -- refuse it rather than silently producing something else.
+        use crate::tools::DimTarget;
+        let mut a = app();
+        let c = a.add_entity(EntityKind::Curve(Curve::Arc(
+            oxidraft_geometry::CircularArc::new(
+                Point2d::from_f64(0.0, 0.0),
+                5.0,
+                0.0,
+                std::f64::consts::TAU,
+            ),
+        )));
+        let p = a.add_entity(EntityKind::Point(Point2d::from_f64(20.0, 0.0)));
+        assert!(!a.smart_dimension_targets(
+            DimTarget::Anchor(p, 0, Point2d::from_f64(20.0, 0.0)),
+            Some(DimTarget::Entity(c)),
+            Some((10.0, 3.0)),
+        ));
     }
 }

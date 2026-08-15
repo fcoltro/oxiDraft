@@ -2660,8 +2660,11 @@ mod badge_tests {
         );
 
         // The second line completes the pick; nothing is recorded yet —
-        // the dimension follows the cursor instead.
-        app.handle_modify_click(&Point2d::from_f64(2.0, 2.25));
+        // the dimension follows the cursor instead. Clicked off b's midpoint
+        // (as the first pick was off a's) so it reads as the whole line, not
+        // an anchor: a midpoint + a line is a PointLineDistance (Task 6),
+        // not the line-line Angle this test pins.
+        app.handle_modify_click(&Point2d::from_f64(1.25, 2.125));
         assert!(
             matches!(
                 app.tool,
