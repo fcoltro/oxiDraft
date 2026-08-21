@@ -6,7 +6,7 @@ use super::tessellate::{
     draw_curve, draw_curve_patterned, draw_patterned_polyline, flatten_curve_world, is_closed_curve,
 };
 use crate::state::AppState;
-use crate::tools::{DimSubject, Tool};
+use crate::tools::{DimSubject, DimTarget, Tool};
 use egui::{Color32, Stroke, pos2, vec2};
 use oxidraft_document::{Color, EntityId, EntityKind, LineTypeRef};
 use oxidraft_geometry::{Curve, CurveSegment, Point2d};
@@ -89,14 +89,15 @@ pub(super) fn tool_prompt(tool: &Tool) -> String {
                 format!("Click to place the {what} leader — Tab switches radius/diameter")
             }
         },
-        Tool::DimConstraint { first, pending } => match (first, pending) {
+        Tool::DimConstraint { first, pending, .. } => match (first, pending) {
             (_, Some(_)) => "Click to place the dimension".into(),
-            (Some(_), None) => {
-                "Pick a second line for an angle/width, or click to place this line's length".into()
+            (Some(DimTarget::Anchor(..)), None) => {
+                "Pick a second point, or a line to measure to — Tab re-reads the pick".into()
             }
-            (None, None) => {
-                "Pick a line (length), a circle/arc (radius), or a first line for an angle".into()
+            (Some(DimTarget::Entity(_)), None) => {
+                "Pick a second line for an angle or width, or click to place this length".into()
             }
+            (None, None) => "Pick a line, a circle/arc, or a point to dimension from".into(),
         },
         Tool::Weld { first } => {
             if first.is_none() {

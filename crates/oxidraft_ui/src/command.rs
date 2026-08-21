@@ -309,10 +309,17 @@ pub fn parse_command(input: &str) -> Command {
         // Pin the selected geometry in place.
         "FIX" | "FIXCON" | "GCFIX" | "ANCHOR" => Command::Fix,
         // Smart dimension: pick geometry to add a driving length/radius/angle.
-        "DIMCON" | "SMARTDIM" | "GCDIM" | "SD" => Command::Activate(Tool::DimConstraint {
-            first: None,
-            pending: None,
-        }),
+        // PDIST/HDIST/VDIST/PLDIST are the point-anchored distance kinds — the
+        // only ones that had no verb. All open the same tool: which kind you
+        // get is decided by the picks and the placement, not by which verb was
+        // typed, the same way DIMDIAMETER is an alias for DIMENSION.
+        "DIMCON" | "SMARTDIM" | "GCDIM" | "SD" | "PDIST" | "HDIST" | "VDIST" | "PLDIST" => {
+            Command::Activate(Tool::DimConstraint {
+                first: None,
+                pending: None,
+                last_anchor: None,
+            })
+        }
         "ERASE" | "E" | "DELETE" => Command::Erase,
         "DISJOINT" | "EXPLODE" | "X" => Command::Explode,
         "JOIN" | "J" => Command::Join,
@@ -413,6 +420,22 @@ mod tests {
         ));
         assert!(matches!(parse_command("Z 2.5"), Command::ZoomScale(s) if (s - 2.5).abs() < 1e-9));
         assert!(matches!(parse_command("ZOOM"), Command::ZoomExtents));
+    }
+
+    #[test]
+    fn the_anchored_distance_verbs_activate_smart_dimension() {
+        // These four kinds were the only ones in the model with no verb at
+        // all. They all open Smart Dimension: which of them you get is
+        // decided by the picks and the placement, not chosen up front.
+        for verb in ["PDIST", "HDIST", "VDIST", "PLDIST"] {
+            assert!(
+                matches!(
+                    parse_command(verb),
+                    Command::Activate(Tool::DimConstraint { .. })
+                ),
+                "{verb} must open Smart Dimension"
+            );
+        }
     }
 
     #[test]

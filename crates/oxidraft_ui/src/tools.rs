@@ -157,6 +157,11 @@ pub enum Tool {
     DimConstraint {
         first: Option<DimTarget>,
         pending: Option<(DimTarget, Option<DimTarget>)>,
+        /// The anchor a banked pick was classified from, if any, so Tab can
+        /// flip its reading between `Anchor` and `Entity` and back without
+        /// losing the index or resolved position. `None` until an `Anchor`
+        /// pick is first flipped to its `Entity` reading.
+        last_anchor: Option<(EntityId, u8, Point2d)>,
     },
     /// Pick-based coincident weld: click two points — a line endpoint or
     /// midpoint, an arc/circle center, or a point entity like the origin —
@@ -1178,6 +1183,25 @@ impl Tool {
             } => {
                 *diameter = !*diameter;
             }
+            // A pick has two readings — the anchor, or the entity it sits on.
+            // Tab corrects a snap that guessed wrong without losing the pick.
+            // The anchor's stored position is kept so flipping back is exact.
+            Tool::DimConstraint {
+                first: Some(target),
+                last_anchor,
+                ..
+            } => {
+                *target = match *target {
+                    DimTarget::Anchor(id, idx, pos) => {
+                        *last_anchor = Some((id, idx, pos));
+                        DimTarget::Entity(id)
+                    }
+                    DimTarget::Entity(id) => match *last_anchor {
+                        Some((aid, idx, pos)) if aid == id => DimTarget::Anchor(id, idx, pos),
+                        _ => DimTarget::Entity(id),
+                    },
+                };
+            }
             _ => {}
         }
     }
@@ -1480,7 +1504,7 @@ impl Tool {
             Tool::CircleTtr { first, .. } => *first = None,
             Tool::CircleTtt { picks } => picks.clear(),
             Tool::Dimension { subject } => *subject = None,
-            Tool::DimConstraint { first, pending } => {
+            Tool::DimConstraint { first, pending, .. } => {
                 *first = None;
                 *pending = None;
             }
@@ -1539,7 +1563,7 @@ impl Tool {
             Tool::CircleTtr { first, .. } => first.is_some(),
             Tool::CircleTtt { picks } => !picks.is_empty(),
             Tool::Dimension { subject } => subject.is_some(),
-            Tool::DimConstraint { first, pending } => first.is_some() || pending.is_some(),
+            Tool::DimConstraint { first, pending, .. } => first.is_some() || pending.is_some(),
             Tool::Weld { first } => first.is_some(),
             Tool::ConPick { picks, .. } => !picks.is_empty(),
             Tool::Ellipse { center, .. } => center.is_some(),
@@ -2932,6 +2956,34 @@ mod tests {
                     diameter: false,
                     ..
                 })
+            }
+        ));
+    }
+
+    #[test]
+    fn tab_flips_a_dimension_pick_between_anchor_and_entity() {
+        // A centre snap that was meant as "this circle's radius" is corrected
+        // in place rather than by cancelling the pick. `last_anchor` keeps
+        // the anchor's resolved position so the flip is reversible.
+        let mut t = Tool::DimConstraint {
+            first: Some(DimTarget::Anchor(EntityId(1), 2, pt(0, 0))),
+            pending: None,
+            last_anchor: None,
+        };
+        t.cycle_reading();
+        assert!(matches!(
+            t,
+            Tool::DimConstraint {
+                first: Some(DimTarget::Entity(EntityId(1))),
+                ..
+            }
+        ));
+        t.cycle_reading();
+        assert!(matches!(
+            t,
+            Tool::DimConstraint {
+                first: Some(DimTarget::Anchor(EntityId(1), 2, _)),
+                ..
             }
         ));
     }

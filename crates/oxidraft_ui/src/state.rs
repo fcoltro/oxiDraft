@@ -5671,6 +5671,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         let (sx, sy) = a.view.world_to_screen(0.0, 0.0);
@@ -5703,6 +5704,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         let (sx, sy) = a.view.world_to_screen(5.0, 0.0);
@@ -5743,6 +5745,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         // The arc's start endpoint: a point on the arc, so it banks as one.
@@ -5873,6 +5876,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         // Both centres, then a placement well above the span — which reads
@@ -5908,6 +5912,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         // Both points, then a placement off to the side — the vertical gap.
@@ -5940,6 +5945,7 @@ mod tests {
         a.tool = crate::tools::Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
         let (sx, sy) = a.view.world_to_screen(0.0, 0.0);
         a.canvas_click(sx, sy);
@@ -5948,7 +5954,8 @@ mod tests {
                 a.tool,
                 crate::tools::Tool::DimConstraint {
                     first: None,
-                    pending: None
+                    pending: None,
+                    ..
                 }
             ),
             "the origin must not bank as a pick, got {:?}",

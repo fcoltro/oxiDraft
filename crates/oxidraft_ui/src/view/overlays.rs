@@ -716,7 +716,7 @@ fn draw_dim_badge(
 /// would drop its length — the would-be dimension renders at the cursor in
 /// the preview color, and the placement click freezes it where it shows.
 pub(super) fn smart_dim_preview(painter: &egui::Painter, app: &AppState, origin: egui::Pos2) {
-    let Tool::DimConstraint { first, pending } = &app.tool else {
+    let Tool::DimConstraint { first, pending, .. } = &app.tool else {
         return;
     };
     // A target that names a point still ghosts as its entity's own
@@ -2644,6 +2644,7 @@ mod badge_tests {
         app.tool = Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         // First pick holds the line — it may still pair with a second one.
@@ -2654,7 +2655,7 @@ mod badge_tests {
         // `Entity`-on-a-line path covered by nothing.
         app.handle_modify_click(&Point2d::from_f64(1.0, 0.0));
         assert!(
-            matches!(app.tool, Tool::DimConstraint { first: Some(DimTarget::Entity(id)), pending: None } if id == a),
+            matches!(app.tool, Tool::DimConstraint { first: Some(DimTarget::Entity(id)), .. } if id == a),
             "the whole line waits in `first`: {:?}",
             app.tool
         );
@@ -2668,7 +2669,11 @@ mod badge_tests {
         assert!(
             matches!(
                 app.tool,
-                Tool::DimConstraint { first: None, pending: Some((x, Some(y))) }
+                Tool::DimConstraint {
+                    first: None,
+                    pending: Some((x, Some(y))),
+                    ..
+                }
                     if x.entity() == a && y.entity() == b
             ),
             "the pair waits for placement: {:?}",
@@ -2691,7 +2696,8 @@ mod badge_tests {
                 app.tool,
                 Tool::DimConstraint {
                     first: None,
-                    pending: None
+                    pending: None,
+                    ..
                 }
             ),
             "the tool is ready for the next pick"
@@ -2713,6 +2719,7 @@ mod badge_tests {
         app.tool = Tool::DimConstraint {
             first: None,
             pending: None,
+            last_anchor: None,
         };
 
         // A circle pairs with nothing, so one pick fully picks it.
@@ -2720,7 +2727,7 @@ mod badge_tests {
         assert!(
             matches!(
                 app.tool,
-                Tool::DimConstraint { first: None, pending: Some((t, None)) } if t.entity() == c_ent
+                Tool::DimConstraint { first: None, pending: Some((t, None)), .. } if t.entity() == c_ent
             ),
             "circle goes straight to the placement leg: {:?}",
             app.tool

@@ -2489,6 +2489,7 @@ pub(super) fn constraint_bar(ctx: &Context, app: &mut AppState, canvas_rect: egu
                         app.execute(Command::Activate(Tool::DimConstraint {
                             first: None,
                             pending: None,
+                            last_anchor: None,
                         }));
                     }
                     bar_divider(ui);

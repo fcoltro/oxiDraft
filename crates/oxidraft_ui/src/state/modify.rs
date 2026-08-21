@@ -155,7 +155,7 @@ impl AppState {
                 self.tool = Tool::Dimension { subject };
                 true
             }
-            Tool::DimConstraint { first, pending } => {
+            Tool::DimConstraint { first, pending, .. } => {
                 // An anchor within tolerance means the click was aimed at a
                 // point on the entity, not the entity itself — the same rule
                 // Weld and ConPick already use, through the same helper.
@@ -194,6 +194,7 @@ impl AppState {
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
+                            last_anchor: None,
                         };
                     }
                     // First pick: anything that could still pair with a
@@ -218,11 +219,13 @@ impl AppState {
                             Tool::DimConstraint {
                                 first: Some(t),
                                 pending: None,
+                                last_anchor: None,
                             }
                         } else {
                             Tool::DimConstraint {
                                 first: None,
                                 pending: Some((t, None)),
+                                last_anchor: None,
                             }
                         };
                     }
@@ -251,6 +254,7 @@ impl AppState {
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: Some((a, Some(t))),
+                            last_anchor: None,
                         };
                     }
                     // A second line → the pair (angle, or width when
@@ -268,6 +272,7 @@ impl AppState {
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: Some((a, Some(t))),
+                            last_anchor: None,
                         };
                     }
                     // Empty space, the same line, or a second pick that
@@ -277,6 +282,7 @@ impl AppState {
                         self.tool = Tool::DimConstraint {
                             first: None,
                             pending: None,
+                            last_anchor: None,
                         };
                     }
                     (None, None, _) => {}
