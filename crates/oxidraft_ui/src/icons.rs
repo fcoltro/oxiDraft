@@ -368,7 +368,7 @@ pub fn app_icon() -> egui::IconData {
     match scaled_pixmap_from_png(png, SIZE, SIZE) {
         Some(pixmap) => {
             let mut rgba = pixmap.data().to_vec();
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 let a = px[3] as u32;
                 if a > 0 && a < 255 {
                     px[0] = (px[0] as u32 * 255 / a).min(255) as u8;

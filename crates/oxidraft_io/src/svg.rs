@@ -775,8 +775,10 @@ fn points_list(s: &str) -> Vec<Point2d> {
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter_map(|t| t.trim().parse().ok())
         .collect();
-    nums.chunks_exact(2)
-        .map(|c| Point2d::from_f64(c[0], c[1]))
+    nums.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[x, y]| Point2d::from_f64(x, y))
         .collect()
 }
 
